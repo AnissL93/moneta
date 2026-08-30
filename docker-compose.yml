@@ -1,0 +1,46 @@
+services:
+  moneta:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://finance:${POSTGRES_PASSWORD:-finance-dev-password}@postgres:5432/finance
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - actual-cache:/data/actual-cache
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finance-dev-password}
+      POSTGRES_DB: finance
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finance -d finance"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  actual-server:
+    image: actualbudget/actual-server:latest
+    ports:
+      - "127.0.0.1:5006:5006"
+    volumes:
+      - actual-data:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  actual-data:
+  actual-cache:

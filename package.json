@@ -1,0 +1,10 @@
+{
+  "name": "moneta",
+  "private": true,
+  "workspaces": ["apps/server"],
+  "scripts": {
+    "dev": "npm run dev -w apps/server",
+    "build": "npm run build -w apps/server",
+    "test": "npm run test -w apps/server"
+  }
+}

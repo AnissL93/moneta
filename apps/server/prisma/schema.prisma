@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  REAUTH_REQUIRED
+  EXPIRED
+  ERROR
+  DISABLED
+}
+
+enum AccountType {
+  CURRENT
+  SAVINGS
+  CREDIT_CARD
+  OTHER
+}
+
+enum TransactionStatus {
+  PENDING
+  SETTLED
+}
+
+enum ImportStatus {
+  NOT_IMPORTED
+  IMPORTED
+  IMPORT_ERROR
+}
+
+enum SyncRunStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+enum SyncErrorType {
+  AUTHORIZATION_EXPIRED
+  RATE_LIMIT
+  PROVIDER_UNAVAILABLE
+  BANK_UNAVAILABLE
+  NETWORK_ERROR
+  INVALID_RESPONSE
+  DATABASE_ERROR
+  ACTUAL_ERROR
+  UNKNOWN
+}
+
+model Connection {
+  id                   String           @id @default(uuid())
+  provider             String
+  providerConnectionId String           @map("provider_connection_id")
+  institutionName      String?          @map("institution_name")
+  status               ConnectionStatus @default(ACTIVE)
+  encryptedCredentials String?          @map("encrypted_credentials")
+  consentExpiresAt     DateTime?        @map("consent_expires_at")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  lastSuccessfulSync   DateTime?        @map("last_successful_sync")
+
+  accounts Account[]
+  syncRuns SyncRun[]
+
+  @@unique([provider, providerConnectionId])
+  @@map("connections")
+}
+
+model Account {
+  id                 String      @id @default(uuid())
+  connectionId       String      @map("connection_id")
+  providerAccountId  String      @map("provider_account_id")
+  name               String
+  displayName        String?     @map("display_name")
+  type               AccountType @default(OTHER)
+  currency           String
+  accountNumberLast4 String?     @map("account_number_last4")
+  sortCodeMasked     String?     @map("sort_code_masked")
+  institutionName    String?     @map("institution_name")
+  active             Boolean     @default(true)
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+  lastSuccessfulSync DateTime?   @map("last_successful_sync")
+
+  connection   Connection         @relation(fields: [connectionId], references: [id])
+  balances     Balance[]
+  transactions Transaction[]
+  actualLink   ActualAccountLink?
+  syncErrors   SyncError[]
+
+  @@unique([connectionId, providerAccountId])
+  @@map("accounts")
+}
+
+model Balance {
+  id                   String   @id @default(uuid())
+  accountId            String   @map("account_id")
+  currentAmountMinor   BigInt?  @map("current_amount_minor")
+  availableAmountMinor BigInt?  @map("available_amount_minor")
+  currency             String
+  observedAt           DateTime @default(now()) @map("observed_at")
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@index([accountId, observedAt])
+  @@map("balances")
+}
+
+model Transaction {
+  id                    String            @id @default(uuid())
+  accountId             String            @map("account_id")
+  providerTransactionId String?           @map("provider_transaction_id")
+  status                TransactionStatus
+  timestamp             DateTime
+  bookedDate            DateTime?         @map("booked_date") @db.Date
+  amountMinor           BigInt            @map("amount_minor")
+  currency              String
+  description           String
+  merchantName          String?           @map("merchant_name")
+  transactionType       String?           @map("transaction_type")
+  category              String?
+  runningBalanceMinor   BigInt?           @map("running_balance_minor")
+  rawHash               String            @map("raw_hash")
+  rawPayload            Json?             @map("raw_payload")
+  importStatus          ImportStatus      @default(NOT_IMPORTED) @map("import_status")
+  actualTransactionId   String?           @map("actual_transaction_id")
+  importedAt            DateTime?         @map("imported_at")
+  deletedAt             DateTime?         @map("deleted_at")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  // Postgres treats NULLs as distinct, so rows without a provider id
+  // fall through to the raw_hash constraint (spec §14, §21).
+  @@unique([accountId, providerTransactionId])
+  @@unique([accountId, rawHash])
+  @@index([accountId, bookedDate])
+  @@map("transactions")
+}
+
+model ActualAccountLink {
+  id              String   @id @default(uuid())
+  localAccountId  String   @unique @map("local_account_id")
+  actualAccountId String   @map("actual_account_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  account Account @relation(fields: [localAccountId], references: [id])
+
+  @@map("actual_account_links")
+}
+
+model SyncRun {
+  id                   String        @id @default(uuid())
+  connectionId         String        @map("connection_id")
+  startedAt            DateTime      @default(now()) @map("started_at")
+  finishedAt           DateTime?     @map("finished_at")
+  status               SyncRunStatus @default(RUNNING)
+  accountsProcessed    Int           @default(0) @map("accounts_processed")
+  transactionsReceived Int           @default(0) @map("transactions_received")
+  transactionsInserted Int           @default(0) @map("transactions_inserted")
+  transactionsUpdated  Int           @default(0) @map("transactions_updated")
+  transactionsSkipped  Int           @default(0) @map("transactions_skipped")
+
+  connection Connection  @relation(fields: [connectionId], references: [id])
+  errors     SyncError[]
+
+  @@map("sync_runs")
+}
+
+model SyncError {
+  id        String        @id @default(uuid())
+  syncRunId String        @map("sync_run_id")
+  accountId String?       @map("account_id")
+  errorType SyncErrorType @map("error_type")
+  message   String
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  syncRun SyncRun  @relation(fields: [syncRunId], references: [id])
+  account Account? @relation(fields: [accountId], references: [id])
+
+  @@map("sync_errors")
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
